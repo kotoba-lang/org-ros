@@ -1,0 +1,43 @@
+(ns kotoba.ros.rosbridge-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [kotoba.ros.rosbridge :as rb]))
+
+(deftest advertise-op-test
+  (is (= {:op "advertise" :topic "/cmd_vel" :type rb/type-geometry-msgs-twist}
+         (rb/advertise-op "/cmd_vel" rb/type-geometry-msgs-twist))))
+
+(deftest unadvertise-op-test
+  (is (= {:op "unadvertise" :topic "/cmd_vel"} (rb/unadvertise-op "/cmd_vel"))))
+
+(deftest publish-op-test
+  (let [msg {:data true}]
+    (is (= {:op "publish" :topic "/estop" :msg msg}
+           (rb/publish-op "/estop" msg)))))
+
+(deftest subscribe-op-test
+  (is (= {:op "subscribe" :topic "/joy" :type rb/type-sensor-msgs-joy}
+         (rb/subscribe-op "/joy" rb/type-sensor-msgs-joy))))
+
+(deftest unsubscribe-op-test
+  (is (= {:op "unsubscribe" :topic "/joy"} (rb/unsubscribe-op "/joy"))))
+
+(deftest type-string-convention-test
+  (testing "ROS 2 type-strings include the /msg/ middle segment"
+    (is (= "std_msgs/msg/Header" rb/type-std-msgs-header))
+    (is (= "std_msgs/msg/Bool" rb/type-std-msgs-bool))
+    (is (= "geometry_msgs/msg/Twist" rb/type-geometry-msgs-twist))
+    (is (= "geometry_msgs/msg/TwistStamped" rb/type-geometry-msgs-twist-stamped))
+    (is (= "sensor_msgs/msg/Joy" rb/type-sensor-msgs-joy))))
+
+(deftest parse-op-test
+  (testing "recognized ops round-trip unchanged"
+    (is (= (rb/advertise-op "/cmd_vel" rb/type-geometry-msgs-twist)
+           (rb/parse-op (rb/advertise-op "/cmd_vel" rb/type-geometry-msgs-twist))))
+    (is (= (rb/publish-op "/joy" {:axes []}) (rb/parse-op (rb/publish-op "/joy" {:axes []})))))
+  (testing "unrecognized op returns nil"
+    (is (nil? (rb/parse-op {:op "call_service" :service "/foo"})))
+    (is (nil? (rb/parse-op {:op "status"}))))
+  (testing "malformed input returns nil"
+    (is (nil? (rb/parse-op {})))
+    (is (nil? (rb/parse-op nil)))
+    (is (nil? (rb/parse-op "not-a-map")))))

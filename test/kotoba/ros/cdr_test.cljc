@@ -1,0 +1,136 @@
+(ns kotoba.ros.cdr-test
+  (:refer-clojure :exclude [read-string])
+  (:require [clojure.test :refer [deftest is testing]]
+            [kotoba.ros.cdr :as cdr :refer [read-string]]))
+
+(defn- roundtrip
+  "Write `v` with `write-fn`, read it back with `read-fn`, return the value."
+  [write-fn read-fn v]
+  (let [w (write-fn (cdr/writer) v)
+        [v' _r] (read-fn (cdr/reader (:bytes w)))]
+    v'))
+
+;; ---------------------------------------------------------------------------
+;; Primitive round-trips
+;; ---------------------------------------------------------------------------
+
+(deftest u8-roundtrip
+  (is (= 0 (roundtrip cdr/write-u8 cdr/read-u8 0)))
+  (is (= 255 (roundtrip cdr/write-u8 cdr/read-u8 255))))
+
+(deftest i8-roundtrip
+  (is (= -128 (roundtrip cdr/write-i8 cdr/read-i8 -128)))
+  (is (= 127 (roundtrip cdr/write-i8 cdr/read-i8 127)))
+  (is (= -1 (roundtrip cdr/write-i8 cdr/read-i8 -1))))
+
+(deftest u16-roundtrip
+  (is (= 0 (roundtrip cdr/write-u16 cdr/read-u16 0)))
+  (is (= 65535 (roundtrip cdr/write-u16 cdr/read-u16 65535)))
+  (is (= 60000 (roundtrip cdr/write-u16 cdr/read-u16 60000))))
+
+(deftest i16-roundtrip
+  (is (= -32768 (roundtrip cdr/write-i16 cdr/read-i16 -32768)))
+  (is (= 32767 (roundtrip cdr/write-i16 cdr/read-i16 32767)))
+  (is (= -30000 (roundtrip cdr/write-i16 cdr/read-i16 -30000))))
+
+(deftest u32-roundtrip
+  (is (= 0 (roundtrip cdr/write-u32 cdr/read-u32 0)))
+  (is (= 4294967295 (roundtrip cdr/write-u32 cdr/read-u32 4294967295)))
+  (is (= 4000000000 (roundtrip cdr/write-u32 cdr/read-u32 4000000000))))
+
+(deftest i32-roundtrip
+  (is (= -2147483648 (roundtrip cdr/write-i32 cdr/read-i32 -2147483648)))
+  (is (= 2147483647 (roundtrip cdr/write-i32 cdr/read-i32 2147483647)))
+  (is (= -2000000000 (roundtrip cdr/write-i32 cdr/read-i32 -2000000000))))
+
+(deftest u64-roundtrip
+  (is (= 0 (roundtrip cdr/write-u64 cdr/read-u64 0)))
+  (is (= 18446744073709551615N (roundtrip cdr/write-u64 cdr/read-u64 18446744073709551615N)))
+  (is (= 10000000000000 (roundtrip cdr/write-u64 cdr/read-u64 10000000000000))))
+
+(deftest i64-roundtrip
+  (is (= -9223372036854775808 (roundtrip cdr/write-i64 cdr/read-i64 -9223372036854775808)))
+  (is (= 9223372036854775807 (roundtrip cdr/write-i64 cdr/read-i64 9223372036854775807)))
+  (is (= -10000000000000 (roundtrip cdr/write-i64 cdr/read-i64 -10000000000000))))
+
+(deftest f32-roundtrip
+  (is (= (double (float 1.5)) (roundtrip cdr/write-f32 cdr/read-f32 (float 1.5))))
+  (is (= (double (float -2.5)) (roundtrip cdr/write-f32 cdr/read-f32 (float -2.5))))
+  (is (= (double (float 0.0)) (roundtrip cdr/write-f32 cdr/read-f32 (float 0.0)))))
+
+(deftest f64-roundtrip
+  (is (= 3.14159265358979 (roundtrip cdr/write-f64 cdr/read-f64 3.14159265358979)))
+  (is (= -1.0 (roundtrip cdr/write-f64 cdr/read-f64 -1.0)))
+  (is (= 0.0 (roundtrip cdr/write-f64 cdr/read-f64 0.0))))
+
+(deftest bytes-roundtrip
+  (let [w (cdr/write-bytes (cdr/writer) [1 2 3 4 5])
+        [bs _r] (cdr/read-bytes (cdr/reader (:bytes w)) 5)]
+    (is (= [1 2 3 4 5] bs))))
+
+;; ---------------------------------------------------------------------------
+;; String: length prefix, UTF-8 body, null terminator
+;; ---------------------------------------------------------------------------
+
+(deftest string-roundtrip
+  (testing "round-trips through write-string/read-string"
+    (is (= "hi" (roundtrip cdr/write-string read-string "hi")))
+    (is (= "" (roundtrip cdr/write-string read-string "")))
+    (is (= "map_frame" (roundtrip cdr/write-string read-string "map_frame"))))
+  (testing "wire layout: uint32 length-including-null-terminator, bytes, 0x00"
+    (let [bs (:bytes (cdr/write-string (cdr/writer) "hi"))]
+      ;; "hi" is 2 bytes + 1 null terminator = 3
+      (is (= [3 0 0 0] (subvec bs 0 4)))
+      (is (= [(int \h) (int \i) 0] (subvec bs 4 7)))
+      (is (= 7 (count bs))))))
+
+;; ---------------------------------------------------------------------------
+;; Alignment
+;; ---------------------------------------------------------------------------
+
+(deftest alignment-padding-test
+  (testing "u8 then u32: 3 padding bytes appear before the u32"
+    (let [w (-> (cdr/writer) (cdr/write-u8 1) (cdr/write-u32 2))]
+      (is (= [1 0 0 0 2 0 0 0] (:bytes w)))))
+  (testing "u16 then u16: no padding needed, already 2-aligned"
+    (let [w (-> (cdr/writer) (cdr/write-u16 1) (cdr/write-u16 2))]
+      (is (= [1 0 2 0] (:bytes w)))))
+  (testing "u8 then u16: 1 padding byte"
+    (let [w (-> (cdr/writer) (cdr/write-u8 9) (cdr/write-u16 1))]
+      (is (= [9 0 1 0] (:bytes w)))))
+  (testing "u8 then u64: 7 padding bytes"
+    (let [w (-> (cdr/writer) (cdr/write-u8 1) (cdr/write-u64 0))]
+      (is (= (into [1] (repeat 7 0)) (take 8 (:bytes w))))
+      (is (= 16 (count (:bytes w))))))
+  (testing "u8 x3 then u32: 1 padding byte to reach the next multiple of 4"
+    (let [w (-> (cdr/writer) (cdr/write-u8 1) (cdr/write-u8 2) (cdr/write-u8 3) (cdr/write-u32 9))]
+      (is (= [1 2 3 0] (subvec (:bytes w) 0 4))))))
+
+;; ---------------------------------------------------------------------------
+;; Encapsulation
+;; ---------------------------------------------------------------------------
+
+(deftest encapsulation-header-bytes-test
+  (let [w (cdr/encapsulate (cdr/writer))]
+    (is (= [0 1 0 0] (:bytes w)))
+    (is (= 4 (:origin w)))))
+
+(deftest de-encapsulate-test
+  (testing "valid header advances pos and resets origin"
+    (let [w (cdr/encapsulate (cdr/writer))
+          r (cdr/de-encapsulate (cdr/reader (:bytes w)))]
+      (is (= 4 (:pos r)))
+      (is (= 4 (:origin r)))))
+  (testing "invalid header throws"
+    (is (thrown? #?(:clj Exception :cljs js/Error)
+                 (cdr/de-encapsulate (cdr/reader [0xFF 0xFF 0xFF 0xFF]))))))
+
+(deftest encapsulated-alignment-is-relative-to-header-end
+  (let [w (-> (cdr/writer) cdr/encapsulate (cdr/write-u8 9) (cdr/write-u32 42))]
+    ;; header(4) + u8(1) + pad(3) + u32(4) = 12 bytes total
+    (is (= 12 (count (:bytes w))))
+    (let [r (cdr/de-encapsulate (cdr/reader (:bytes w)))
+          [a r] (cdr/read-u8 r)
+          [b _r] (cdr/read-u32 r)]
+      (is (= 9 a))
+      (is (= 42 b)))))
