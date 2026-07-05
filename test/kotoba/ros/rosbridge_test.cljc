@@ -27,6 +27,10 @@
     (is (= "std_msgs/msg/Bool" rb/type-std-msgs-bool))
     (is (= "geometry_msgs/msg/Twist" rb/type-geometry-msgs-twist))
     (is (= "geometry_msgs/msg/TwistStamped" rb/type-geometry-msgs-twist-stamped))
+    (is (= "geometry_msgs/msg/Point" rb/type-geometry-msgs-point))
+    (is (= "geometry_msgs/msg/Quaternion" rb/type-geometry-msgs-quaternion))
+    (is (= "geometry_msgs/msg/Pose" rb/type-geometry-msgs-pose))
+    (is (= "geometry_msgs/msg/PoseStamped" rb/type-geometry-msgs-pose-stamped))
     (is (= "sensor_msgs/msg/Joy" rb/type-sensor-msgs-joy))))
 
 (deftest parse-op-test

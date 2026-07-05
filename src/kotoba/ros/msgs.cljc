@@ -2,10 +2,12 @@
   "Standard ROS 2 message shapes -- pure EDN maps in, full CDR wire bytes
   (including the encapsulation header) out, and back.
 
-  Exactly the messages a teleop bridge needs, no more:
-  `builtin_interfaces/Time`, `std_msgs/Header`, `std_msgs/Bool`,
-  `geometry_msgs/Vector3`, `geometry_msgs/Twist`,
-  `geometry_msgs/TwistStamped`, `sensor_msgs/Joy`.
+  Exactly the messages a teleop bridge or a governed swarm-choreography
+  bridge need, no more: `builtin_interfaces/Time`, `std_msgs/Header`,
+  `std_msgs/Bool`, `geometry_msgs/Vector3`, `geometry_msgs/Twist`,
+  `geometry_msgs/TwistStamped`, `geometry_msgs/Point`,
+  `geometry_msgs/Quaternion`, `geometry_msgs/Pose`,
+  `geometry_msgs/PoseStamped`, `sensor_msgs/Joy`.
 
   Field names match real ROS 2 message definitions verbatim (including
   `:frame_id`'s underscore) -- a JSON bridge (e.g. rosbridge_suite, see
@@ -155,6 +157,103 @@
   "Full CDR bytes -> geometry_msgs/TwistStamped EDN map."
   [bytes]
   (first (read-twist-stamped (cdr/de-encapsulate (cdr/reader bytes)))))
+
+;; ---------------------------------------------------------------------------
+;; geometry_msgs/Point -- {:x <float64> :y <float64> :z <float64>}
+;; Wire-identical to Vector3 (three float64 fields) but semantically a
+;; position rather than a free vector -- ROS 2 keeps them as distinct
+;; message types, so this library does too, with its own write/read pair
+;; rather than aliasing Vector3's.
+;; ---------------------------------------------------------------------------
+
+(defn- write-point [w p]
+  (-> w (cdr/write-f64 (:x p)) (cdr/write-f64 (:y p)) (cdr/write-f64 (:z p))))
+
+(defn- read-point [r]
+  (let [[x r] (cdr/read-f64 r)
+        [y r] (cdr/read-f64 r)
+        [z r] (cdr/read-f64 r)]
+    [{:x x :y y :z z} r]))
+
+(defn encode-point
+  "geometry_msgs/Point -> full CDR bytes."
+  [p]
+  (:bytes (write-point (cdr/encapsulate (cdr/writer)) p)))
+
+(defn decode-point
+  "Full CDR bytes -> geometry_msgs/Point EDN map."
+  [bytes]
+  (first (read-point (cdr/de-encapsulate (cdr/reader bytes)))))
+
+;; ---------------------------------------------------------------------------
+;; geometry_msgs/Quaternion -- {:x <float64> :y <float64> :z <float64> :w <float64>}
+;; ---------------------------------------------------------------------------
+
+(defn- write-quaternion [w q]
+  (-> w
+      (cdr/write-f64 (:x q)) (cdr/write-f64 (:y q))
+      (cdr/write-f64 (:z q)) (cdr/write-f64 (:w q))))
+
+(defn- read-quaternion [r]
+  (let [[x r] (cdr/read-f64 r)
+        [y r] (cdr/read-f64 r)
+        [z r] (cdr/read-f64 r)
+        [w r] (cdr/read-f64 r)]
+    [{:x x :y y :z z :w w} r]))
+
+(defn encode-quaternion
+  "geometry_msgs/Quaternion -> full CDR bytes."
+  [q]
+  (:bytes (write-quaternion (cdr/encapsulate (cdr/writer)) q)))
+
+(defn decode-quaternion
+  "Full CDR bytes -> geometry_msgs/Quaternion EDN map."
+  [bytes]
+  (first (read-quaternion (cdr/de-encapsulate (cdr/reader bytes)))))
+
+;; ---------------------------------------------------------------------------
+;; geometry_msgs/Pose -- {:position <Point> :orientation <Quaternion>}
+;; ---------------------------------------------------------------------------
+
+(defn- write-pose [w p]
+  (-> w (write-point (:position p)) (write-quaternion (:orientation p))))
+
+(defn- read-pose [r]
+  (let [[position r] (read-point r)
+        [orientation r] (read-quaternion r)]
+    [{:position position :orientation orientation} r]))
+
+(defn encode-pose
+  "geometry_msgs/Pose -> full CDR bytes."
+  [p]
+  (:bytes (write-pose (cdr/encapsulate (cdr/writer)) p)))
+
+(defn decode-pose
+  "Full CDR bytes -> geometry_msgs/Pose EDN map."
+  [bytes]
+  (first (read-pose (cdr/de-encapsulate (cdr/reader bytes)))))
+
+;; ---------------------------------------------------------------------------
+;; geometry_msgs/PoseStamped -- {:header <Header> :pose <Pose>}
+;; ---------------------------------------------------------------------------
+
+(defn- write-pose-stamped [w ps]
+  (-> w (write-header (:header ps)) (write-pose (:pose ps))))
+
+(defn- read-pose-stamped [r]
+  (let [[header r] (read-header r)
+        [pose r] (read-pose r)]
+    [{:header header :pose pose} r]))
+
+(defn encode-pose-stamped
+  "geometry_msgs/PoseStamped -> full CDR bytes."
+  [ps]
+  (:bytes (write-pose-stamped (cdr/encapsulate (cdr/writer)) ps)))
+
+(defn decode-pose-stamped
+  "Full CDR bytes -> geometry_msgs/PoseStamped EDN map."
+  [bytes]
+  (first (read-pose-stamped (cdr/de-encapsulate (cdr/reader bytes)))))
 
 ;; ---------------------------------------------------------------------------
 ;; sensor_msgs/Joy -- {:header <Header> :axes [<float32>...] :buttons [<int32>...]}
