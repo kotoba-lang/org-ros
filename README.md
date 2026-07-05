@@ -8,7 +8,8 @@ the same pattern as `org-khronos-gltf` or `org-openid-oidc` — a small,
 zero-dependency, portable `.cljc` implementation of an open standard, pure
 data in, pure data out. `org-ros` is that pattern applied to ROS 2, and is
 the message/wire-format layer underneath the `cloud-itonami` PS5 DualSense
-teleop bridge.
+teleop bridge and `kotoba-lang/swarm-choreo`'s governed swarm-choreography
+bridge.
 
 Models the real DDS-XTypes CDR wire format (alignment-aware, little-endian),
 a handful of standard ROS 2 message shapes, the rosbridge v2 JSON-shaped
@@ -79,7 +80,9 @@ CDR/message layer with their own DDS-RTPS transport.
   ROS 2 message starts with.
 - `kotoba.ros.msgs` — `builtin_interfaces/Time`, `std_msgs/Header`,
   `std_msgs/Bool`, `geometry_msgs/Vector3`, `geometry_msgs/Twist`,
-  `geometry_msgs/TwistStamped`, `sensor_msgs/Joy` — EDN map shapes with
+  `geometry_msgs/TwistStamped`, `geometry_msgs/Point`,
+  `geometry_msgs/Quaternion`, `geometry_msgs/Pose`,
+  `geometry_msgs/PoseStamped`, `sensor_msgs/Joy` — EDN map shapes with
   `encode-*`/`decode-*` pairs that produce/consume full CDR bytes.
 - `kotoba.ros.rosbridge` — pure constructor/parser functions for the
   rosbridge v2 ops a teleop bridge needs (`advertise`, `unadvertise`,

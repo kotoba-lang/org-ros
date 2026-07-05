@@ -27,6 +27,10 @@
 (def type-std-msgs-bool "std_msgs/msg/Bool")
 (def type-geometry-msgs-twist "geometry_msgs/msg/Twist")
 (def type-geometry-msgs-twist-stamped "geometry_msgs/msg/TwistStamped")
+(def type-geometry-msgs-point "geometry_msgs/msg/Point")
+(def type-geometry-msgs-quaternion "geometry_msgs/msg/Quaternion")
+(def type-geometry-msgs-pose "geometry_msgs/msg/Pose")
+(def type-geometry-msgs-pose-stamped "geometry_msgs/msg/PoseStamped")
 (def type-sensor-msgs-joy "sensor_msgs/msg/Joy")
 
 ;; ---------------------------------------------------------------------------

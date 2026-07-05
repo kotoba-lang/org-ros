@@ -30,6 +30,25 @@
             :twist {:linear {:x 1.0 :y 0.0 :z 0.0} :angular {:x 0.0 :y 0.0 :z 0.1}}}]
     (is (= ts (msgs/decode-twist-stamped (msgs/encode-twist-stamped ts))))))
 
+(deftest point-roundtrip
+  (let [p {:x 1.0 :y -2.5 :z 3.75}]
+    (is (= p (msgs/decode-point (msgs/encode-point p))))))
+
+(deftest quaternion-roundtrip
+  (let [q {:x 0.0 :y 0.0 :z 0.7071067811865476 :w 0.7071067811865476}]
+    (is (= q (msgs/decode-quaternion (msgs/encode-quaternion q))))))
+
+(deftest pose-roundtrip
+  (let [p {:position {:x 1.0 :y 2.0 :z 0.0}
+           :orientation {:x 0.0 :y 0.0 :z 0.0 :w 1.0}}]
+    (is (= p (msgs/decode-pose (msgs/encode-pose p))))))
+
+(deftest pose-stamped-roundtrip
+  (let [ps {:header {:stamp {:sec 100 :nanosec 200} :frame_id "map"}
+            :pose {:position {:x 30.0 :y -28.0 :z 12.5}
+                   :orientation {:x 0.0 :y 0.0 :z 0.3826834323650898 :w 0.9238795325112867}}}]
+    (is (= ps (msgs/decode-pose-stamped (msgs/encode-pose-stamped ps))))))
+
 (deftest joy-roundtrip
   (testing "typical PS5 DualSense-shaped joy message"
     (let [j {:header {:stamp {:sec 5 :nanosec 0} :frame_id "joy"}
