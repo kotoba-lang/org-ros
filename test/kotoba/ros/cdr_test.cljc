@@ -43,15 +43,36 @@
   (is (= 2147483647 (roundtrip cdr/write-i32 cdr/read-i32 2147483647)))
   (is (= -2000000000 (roundtrip cdr/write-i32 cdr/read-i32 -2000000000))))
 
+;; The 64-bit extremes are asserted only where the runtime can express them.
+;; A ClojureScript number is a double: 2^64-1 and 2^63-1 are not values it
+;; has, and writing them here would not test the codec -- it would compare two
+;; roundings of each other and pass whatever the codec did. Measured
+;; 2026-08-25: with those literals in place the nbb run reported
+;; `(not (= 18446744073709552000 0))`, which is the reader correctly refusing
+;; a value that had already stopped being 2^64-1 before it arrived.
+;;
+;; What both runtimes CAN express is asserted on both. Same split as
+;; `org-apache-arrow`'s `a-value-past-2-to-the-53-is-exact-or-refused` and
+;; `org-ietf-xdr`'s uhyper tests.
+
 (deftest u64-roundtrip
   (is (= 0 (roundtrip cdr/write-u64 cdr/read-u64 0)))
-  (is (= 18446744073709551615N (roundtrip cdr/write-u64 cdr/read-u64 18446744073709551615N)))
-  (is (= 10000000000000 (roundtrip cdr/write-u64 cdr/read-u64 10000000000000))))
+  (is (= 10000000000000 (roundtrip cdr/write-u64 cdr/read-u64 10000000000000)))
+  (is (= 9007199254740991 (roundtrip cdr/write-u64 cdr/read-u64 9007199254740991))
+      "2^53 - 1: the largest integer both runtimes hold exactly")
+  #?(:clj (is (= 18446744073709551615N
+                 (roundtrip cdr/write-u64 cdr/read-u64 18446744073709551615N))
+              "2^64 - 1, on the runtime that has it")))
 
 (deftest i64-roundtrip
-  (is (= -9223372036854775808 (roundtrip cdr/write-i64 cdr/read-i64 -9223372036854775808)))
-  (is (= 9223372036854775807 (roundtrip cdr/write-i64 cdr/read-i64 9223372036854775807)))
-  (is (= -10000000000000 (roundtrip cdr/write-i64 cdr/read-i64 -10000000000000))))
+  (is (= -10000000000000 (roundtrip cdr/write-i64 cdr/read-i64 -10000000000000)))
+  (is (= 9007199254740991 (roundtrip cdr/write-i64 cdr/read-i64 9007199254740991)))
+  (is (= -9007199254740991 (roundtrip cdr/write-i64 cdr/read-i64 -9007199254740991))
+      "the negative side of the same bound -- where byte-at used to add 2^64")
+  #?(:clj (do (is (= -9223372036854775808
+                     (roundtrip cdr/write-i64 cdr/read-i64 -9223372036854775808)))
+              (is (= 9223372036854775807
+                     (roundtrip cdr/write-i64 cdr/read-i64 9223372036854775807))))))
 
 (deftest f32-roundtrip
   (is (= (double (float 1.5)) (roundtrip cdr/write-f32 cdr/read-f32 (float 1.5))))
@@ -81,7 +102,11 @@
     (let [bs (:bytes (cdr/write-string (cdr/writer) "hi"))]
       ;; "hi" is 2 bytes + 1 null terminator = 3
       (is (= [3 0 0 0] (subvec bs 0 4)))
-      (is (= [(int \h) (int \i) 0] (subvec bs 4 7)))
+      ;; Code points, not `(int \h)`. `cljs.core/int` is `(bit-or x 0)` and a
+      ;; ClojureScript character is a one-character string, so `(int \h)` is 0
+      ;; there -- the EXPECTATION was wrong on this runtime, not the writer,
+      ;; which correctly produced [104 105 0]. Measured 2026-08-25.
+      (is (= [0x68 0x69 0] (subvec bs 4 7)) "\"hi\" as UTF-8, then the null")
       (is (= 7 (count bs))))))
 
 ;; ---------------------------------------------------------------------------
