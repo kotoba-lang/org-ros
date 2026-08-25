@@ -75,16 +75,45 @@
   wraparound) -- exact for every `s` this library uses. `:cljs` cannot use
   `bit-and`/`bit-shift-*` for `s` >= 32: JS's bitwise operators coerce their
   operand to Int32 first, silently truncating anything outside +-2^31
-  *before* the shift even happens. Division/modulo stay exact up to
-  `Number.MAX_SAFE_INTEGER` (2^53) -- ample for this library's practical
-  range (ROS 2 sequence numbers, nanosecond stamps, durations). This is the
-  same trade-off `dag-cbor.core/byte-at` documents elsewhere in this
-  codebase for an analogous wire-format problem."
+  *before* the shift even happens.
+
+  The `:cljs` branch used to do the arithmetic on plain JS numbers, with this
+  docstring explaining that division and modulo stay exact up to 2^53 and that
+  this is ample for the library's range. It was -- but the line below it
+  began by adding 2^64 to any NEGATIVE `n`, which leaves that range
+  immediately. Measured 2026-08-25 under nbb, before this change:
+
+    (roundtrip write-i16 read-i16 -30000)  =>  -30720
+    (roundtrip write-i32 read-i32 -2000000000)  =>  -1999998976
+
+  -30000 + 2^64 is 18446744073709521616, and doubles are spaced 2048 apart
+  there, so the low bytes were gone before the first division. A sixteen-bit
+  round trip, in a wire-format codec, on the runtime this file's extension
+  claims. The precondition the docstring stated was violated by the
+  expression underneath it.
+
+  `js/BigInt` has exact integer arithmetic and a two's-complement primitive
+  (`BigInt.asUintN`), so the `:cljs` branch now does what the `:clj` branch
+  does rather than an approximation of it."
   [n s]
   #?(:clj (bit-and (unsigned-bit-shift-right (unchecked-long n) s) 0xff)
-     :cljs (mod (js/Math.floor (/ (if (neg? n) (+ n (js/Math.pow 2 64)) n)
-                                   (js/Math.pow 2 s)))
-                256)))
+     :cljs (let [;; `n` arrives as a plain number from the integer writers and
+                 ;; as a bigint from `write-f64`, which gets its bits from
+                 ;; `DataView.getBigUint64`. Accept both rather than making the
+                 ;; float path convert down to a double and back.
+                 ;; A JS bigint is a primitive, so `instance?` is false for it;
+                 ;; property access boxes it, which is why the constructor check
+                 ;; works. Same idiom as `kotoba.kir.cljs-i64/bigint-value?`.
+                 bigint? (try (= (.-constructor n) js/BigInt)
+                              (catch :default _ false))
+                 u (js/BigInt.asUintN
+                    64 (if bigint? n (js/BigInt (js/Math.trunc n))))
+                 ;; 2^s as a bigint. Not `(bit-shift-left 1 s)`, and not
+                 ;; `BigInt(Math.pow(2, s))` -- the first wraps its shift
+                 ;; count at 32, and `s` reaches 56 here.
+                 divisor (loop [i 0 v (js/BigInt 1)]
+                           (if (>= i s) v (recur (inc i) (* v (js/BigInt 2)))))]
+             (js/Number (js/BigInt.asUintN 8 (/ u divisor))))))
 
 (defn- bytes->uint
   "Little-endian byte seq `bs` -> unsigned integer, via arithmetic (NOT bit
@@ -262,8 +291,26 @@
 (defn read-u64 [r]
   (let [r (rpad r 8) [bs r'] (take-n r 8)] [(bytes->uint bs) r']))
 
-(defn read-i64 [r]
-  (let [[uv r'] (read-u64 r)] [(to-signed uv half64 full64) r']))
+(defn read-i64
+  "Signed 64-bit. Inverse of `write-i64`.
+
+  The `:cljs` branch does not go through `read-u64`. Signing via
+  `to-signed` means forming the UNSIGNED value first, and for any negative
+  i64 that is near 2^64 -- past 2^53, where a ClojureScript number stops being
+  exact -- so the subtraction that follows returns a rounded answer. Measured
+  2026-08-25: -9007199254740991, itself comfortably inside the exact range,
+  came back as -9007199254740992, because its unsigned form on the wire is
+  18446744064702352625.
+
+  `BigInt.asIntN` does the two's-complement interpretation without ever
+  materialising that number as a double."
+  [r]
+  #?(:clj (let [[uv r'] (read-u64 r)] [(to-signed uv half64 full64) r'])
+     :cljs (let [r (rpad r 8)
+                 [bs r'] (take-n r 8)
+                 u (reduce (fn [acc b] (+ (* acc (js/BigInt 256)) (js/BigInt b)))
+                           (js/BigInt 0) (reverse bs))]
+             [(js/Number (js/BigInt.asIntN 64 u)) r'])))
 
 (defn read-f32 [r]
   (let [[bits r'] (read-u32 r)]
@@ -273,13 +320,28 @@
                 (.getFloat32 dv 0 false)))
      r']))
 
-(defn read-f64 [r]
-  (let [[bits r'] (read-u64 r)]
-    [#?(:clj (Double/longBitsToDouble (unchecked-long bits))
-        :cljs (let [buf (js/ArrayBuffer. 8) dv (js/DataView. buf)]
-                (.setBigUint64 dv 0 (js/BigInt bits) false)
-                (.getFloat64 dv 0 false)))
-     r']))
+(defn read-f64
+  "IEEE-754 binary64. Inverse of `write-f64`.
+
+  The `:cljs` branch takes the BYTES rather than the integer `read-u64`
+  builds. That integer is assembled by `bytes->uint`, which on this runtime is
+  plain double arithmetic and therefore exact only to 2^53 -- and a double's
+  bit pattern routinely needs all 64. Measured 2026-08-25 before this change,
+  3.14159265358979 round-tripped to 3.1415926535896688, and every message
+  carrying an orientation or a velocity was wrong in the last few digits.
+
+  There is no integer in this path now, so there is nothing to round."
+  [r]
+  #?(:clj (let [[bits r'] (read-u64 r)]
+            [(Double/longBitsToDouble (unchecked-long bits)) r'])
+     :cljs (let [r (rpad r 8)
+                 [bs r'] (take-n r 8)
+                 buf (js/ArrayBuffer. 8)
+                 dv (js/DataView. buf)]
+             ;; `write-f64` writes little-endian bytes via `byte-at`, so read
+             ;; them back in the same order.
+             (dotimes [i 8] (.setUint8 dv i (nth bs i)))
+             [(.getFloat64 dv 0 true) r'])))
 
 (defn read-bytes
   "Read `n` raw bytes with NO alignment. Inverse of `write-bytes`."
